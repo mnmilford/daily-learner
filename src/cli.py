@@ -143,5 +143,15 @@ def topics_cmd():
     console.print(table)
 
 
+@main.command("web")
+@click.option("--host", default="0.0.0.0", help="Bind address")
+@click.option("--port", default=8090, help="Port number")
+def web_cmd(host, port):
+    """Start the web UI."""
+    from src.web.app import run_server
+    console.print(f"[green]Starting web UI on http://{host}:{port}[/green]")
+    run_server(host=host, port=port)
+
+
 if __name__ == "__main__":
     main()

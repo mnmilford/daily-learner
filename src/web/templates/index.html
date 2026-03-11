@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Learner</title>
+    <link rel="stylesheet" href="/learn/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>Daily Learner</h1>
+        <div class="date" id="today-date"></div>
+    </div>
+
+    <nav>
+        <button class="active" onclick="navigate('session')">Session</button>
+        <button onclick="navigate('topics')">Topics</button>
+        <button onclick="navigate('stats')">Stats</button>
+        <button onclick="navigate('generate')">Generate</button>
+    </nav>
+
+    <!-- Session View -->
+    <div id="view-session">
+        <div id="stats-bar" class="stats-row"></div>
+        <div id="session-area" style="margin-top: 20px;"></div>
+    </div>
+
+    <!-- Topics View -->
+    <div id="view-topics" style="display: none;">
+        <div id="topics-area"></div>
+    </div>
+
+    <!-- Stats View -->
+    <div id="view-stats" style="display: none;">
+        <div id="full-stats-area"></div>
+    </div>
+
+    <!-- Generate View -->
+    <div id="view-generate" style="display: none;">
+        <div class="card" style="text-align: center;">
+            <h3 style="margin-bottom: 8px;">Generate Session</h3>
+            <p style="color: var(--text-dim); font-size: 14px; margin-bottom: 16px;">
+                Run the pipeline to create flashcards from a day's logs.
+            </p>
+            <div class="generate-form">
+                <input type="date" id="gen-date" />
+                <button class="btn btn-primary" onclick="runGenerate()">Generate</button>
+            </div>
+            <div id="gen-status" style="margin-top: 16px; font-size: 14px;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = '/learn';
+let sessionData = null;
+let currentIndex = 0;
+let sessionConfidences = [];
+
+// Navigation
+function navigate(view) {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    ['session', 'topics', 'stats', 'generate'].forEach(v => {
+        document.getElementById('view-' + v).style.display = v === view ? 'block' : 'none';
+    });
+    if (view === 'topics') loadTopics();
+    if (view === 'stats') loadFullStats();
+    if (view === 'session' && !sessionData) loadSession();
+}
+
+// Stats bar
+async function loadStats() {
+    const r = await fetch(API + '/api/stats');
+    const s = await r.json();
+    document.getElementById('today-date').textContent = s.today;
+    document.getElementById('stats-bar').innerHTML = `
+        <div class="stat-card"><div class="value">${s.streak}</div><div class="label">Streak</div></div>
+        <div class="stat-card"><div class="value">${s.total_topics}</div><div class="label">Topics</div></div>
+        <div class="stat-card"><div class="value">${s.review_queue}</div><div class="label">Due</div></div>
+        <div class="stat-card"><div class="value">${s.avg_confidence || 0}</div><div class="label">Avg Conf</div></div>
+    `;
+}
+
+// Session
+async function loadSession() {
+    const area = document.getElementById('session-area');
+    area.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading session...</div>';
+
+    const r = await fetch(API + '/api/session');
+    sessionData = await r.json();
+    currentIndex = 0;
+    sessionConfidences = [];
+
+    if (!sessionData.items || sessionData.items.length === 0) {
+        area.innerHTML = `
+            <div class="empty-state">
+                <h3>No items for today</h3>
+                <p>Run the pipeline first to generate content.</p>
+                <button class="btn btn-primary" style="margin-top: 16px; width: auto; padding: 10px 24px;"
+                    onclick="navigate('generate'); document.querySelectorAll('nav button')[3].classList.add('active'); document.querySelectorAll('nav button')[0].classList.remove('active');">
+                    Generate Now
+                </button>
+            </div>`;
+        return;
+    }
+
+    renderItem();
+}
+
+function renderItem() {
+    const area = document.getElementById('session-area');
+
+    if (currentIndex >= sessionData.items.length) {
+        showSummary();
+        return;
+    }
+
+    const item = sessionData.items[currentIndex];
+    const total = sessionData.items.length;
+    const pct = ((currentIndex) / total * 100).toFixed(0);
+
+    let typeLabel, typeClass;
+    if (item.type === 'flashcard') { typeLabel = 'Flashcard'; typeClass = 'badge-flashcard'; }
+    else if (item.type === 'question') { typeLabel = 'Question'; typeClass = 'badge-question'; }
+    else { typeLabel = 'CLI Challenge'; typeClass = 'badge-challenge'; }
+
+    const newReview = item.is_new
+        ? '<span class="badge badge-new">NEW</span>'
+        : '<span class="badge badge-review">REVIEW</span>';
+
+    let cardContent = '';
+    let answerContent = '';
+
+    if (item.type === 'flashcard') {
+        cardContent = item.front;
+        answerContent = item.back;
+    } else if (item.type === 'question') {
+        cardContent = item.question + (item.hint ? `<div class="hint">Hint: ${esc(item.hint)}</div>` : '');
+        answerContent = item.model_answer;
+    } else {
+        cardContent = item.scenario + (item.hint ? `<div class="hint">Hint: ${esc(item.hint)}</div>` : '');
+        answerContent = `<div class="solution-block">${esc(item.solution)}</div>`;
+    }
+
+    area.innerHTML = `
+        <div class="progress-wrap">
+            <div class="progress-bar"><div class="progress-fill" style="width: ${pct}%"></div></div>
+            <div class="progress-text">${currentIndex + 1} / ${total}</div>
+        </div>
+        <div class="card">
+            <div class="card-type">
+                <span class="${typeClass}">${typeLabel}</span>
+                ${newReview}
+            </div>
+            <div class="topic-title">${esc(item.topic_title)}</div>
+            <div class="content">${esc(cardContent)}</div>
+            <button class="btn btn-primary reveal-btn" id="reveal-btn" onclick="revealAnswer()">
+                ${item.type === 'challenge' ? 'Show Solution' : 'Reveal Answer'}
+            </button>
+            <div class="answer-area hidden" id="answer-area">
+                <div class="answer-text">${answerContent}</div>
+                <div class="conf-label">How well did you know this?</div>
+                <div class="confidence-bar">
+                    <button class="conf-btn" data-conf="1" onclick="rate(1)">1</button>
+                    <button class="conf-btn" data-conf="2" onclick="rate(2)">2</button>
+                    <button class="conf-btn" data-conf="3" onclick="rate(3)">3</button>
+                    <button class="conf-btn" data-conf="4" onclick="rate(4)">4</button>
+                    <button class="conf-btn" data-conf="5" onclick="rate(5)">5</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function esc(s) {
+    if (!s) return '';
+    // Allow the hint/solution HTML through but escape the rest
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+}
+
+function revealAnswer() {
+    document.getElementById('reveal-btn').style.display = 'none';
+    document.getElementById('answer-area').classList.remove('hidden');
+}
+
+async function rate(confidence) {
+    const item = sessionData.items[currentIndex];
+    sessionConfidences.push(confidence);
+
+    // Record review
+    await fetch(API + '/api/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: item.topic_id, confidence }),
+    });
+
+    currentIndex++;
+    renderItem();
+}
+
+async function showSummary() {
+    // Mark session complete
+    const r = await fetch(API + '/api/complete', { method: 'POST' });
+    const data = await r.json();
+    const stats = data.stats;
+
+    const avg = sessionConfidences.length
+        ? (sessionConfidences.reduce((a, b) => a + b, 0) / sessionConfidences.length).toFixed(1)
+        : 0;
+
+    const area = document.getElementById('session-area');
+    area.innerHTML = `
+        <div class="progress-wrap">
+            <div class="progress-bar"><div class="progress-fill" style="width: 100%"></div></div>
+        </div>
+        <div class="summary">
+            <h2>Session Complete</h2>
+            <div class="big-stat">${avg}</div>
+            <div class="big-label">Average Confidence</div>
+            <div class="stats-row">
+                <div class="stat-card"><div class="value">${sessionConfidences.length}</div><div class="label">Reviewed</div></div>
+                <div class="stat-card"><div class="value">${stats.streak}</div><div class="label">Streak</div></div>
+                <div class="stat-card"><div class="value">${stats.total_topics}</div><div class="label">Total Topics</div></div>
+                <div class="stat-card"><div class="value">${stats.graduated}</div><div class="label">Graduated</div></div>
+            </div>
+        </div>
+    `;
+
+    loadStats();
+}
+
+// Topics
+async function loadTopics() {
+    const area = document.getElementById('topics-area');
+    area.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading topics...</div>';
+
+    const r = await fetch(API + '/api/topics');
+    const topics = await r.json();
+
+    if (!topics.length) {
+        area.innerHTML = '<div class="empty-state"><h3>No topics yet</h3><p>Generate a session first.</p></div>';
+        return;
+    }
+
+    let html = '<div class="card" style="padding: 0;"><ul class="topics-list">';
+    for (const t of topics) {
+        const status = t.graduated ? '<span style="color: var(--green)">graduated</span>' : `next: ${t.next_review}`;
+        html += `
+            <li class="topic-item">
+                <div class="topic-info">
+                    <div class="topic-name">${esc(t.title || t.id)}</div>
+                    <div class="topic-domain">${esc(t.domain || '')}</div>
+                </div>
+                <div class="topic-meta">
+                    <span><span class="conf-dot conf-${t.confidence}"></span>${t.confidence}/5</span>
+                    <span>${t.times_reviewed}x</span>
+                    <span>${status}</span>
+                </div>
+            </li>`;
+    }
+    html += '</ul></div>';
+    area.innerHTML = html;
+}
+
+// Full stats
+async function loadFullStats() {
+    const area = document.getElementById('full-stats-area');
+    const r = await fetch(API + '/api/stats');
+    const s = await r.json();
+
+    area.innerHTML = `
+        <div class="stats-row" style="margin-bottom: 20px;">
+            <div class="stat-card"><div class="value">${s.streak}</div><div class="label">Day Streak</div></div>
+            <div class="stat-card"><div class="value">${s.total_sessions}</div><div class="label">Sessions</div></div>
+        </div>
+        <div class="card">
+            <table style="width: 100%; font-size: 14px;">
+                <tr><td style="color: var(--text-dim);">Total topics</td><td style="text-align: right; font-weight: 600;">${s.total_topics}</td></tr>
+                <tr><td style="color: var(--text-dim);">Reviewed</td><td style="text-align: right; font-weight: 600;">${s.reviewed}</td></tr>
+                <tr><td style="color: var(--text-dim);">Unreviewed</td><td style="text-align: right; font-weight: 600;">${s.unreviewed}</td></tr>
+                <tr><td style="color: var(--text-dim);">Graduated</td><td style="text-align: right; font-weight: 600; color: var(--green);">${s.graduated}</td></tr>
+                <tr><td style="color: var(--text-dim);">Avg confidence</td><td style="text-align: right; font-weight: 600;">${s.avg_confidence}/5</td></tr>
+                <tr><td style="color: var(--text-dim);">Review queue</td><td style="text-align: right; font-weight: 600;">${s.review_queue}</td></tr>
+            </table>
+        </div>
+    `;
+}
+
+// Generate
+async function runGenerate() {
+    const dateInput = document.getElementById('gen-date');
+    const status = document.getElementById('gen-status');
+    const date = dateInput.value || null;
+
+    status.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Running pipeline...</div>';
+
+    try {
+        const r = await fetch(API + '/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date }),
+        });
+        const data = await r.json();
+        if (data.ok) {
+            status.innerHTML = `<span style="color: var(--green);">Session generated! <a href="#" onclick="navigate('session'); document.querySelectorAll('nav button')[0].click(); return false;" style="color: var(--accent);">Start reviewing</a></span>`;
+            sessionData = null;
+        } else {
+            status.innerHTML = `<span style="color: var(--yellow);">${esc(data.message)}</span>`;
+        }
+    } catch (e) {
+        status.innerHTML = `<span style="color: var(--red);">Error: ${esc(e.message)}</span>`;
+    }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+
+    // Space/Enter to reveal
+    if ((e.key === ' ' || e.key === 'Enter') && document.getElementById('reveal-btn')?.style.display !== 'none') {
+        e.preventDefault();
+        revealAnswer();
+        return;
+    }
+
+    // 1-5 to rate
+    if ('12345'.includes(e.key) && document.getElementById('answer-area')?.classList.contains('hidden') === false) {
+        rate(parseInt(e.key));
+    }
+});
+
+// Init
+loadStats();
+loadSession();
+
+// Set default date for generate
+const yesterday = new Date();
+yesterday.setDate(yesterday.getDate() - 1);
+document.getElementById('gen-date').value = yesterday.toISOString().split('T')[0];
+</script>
+</body>
+</html>
