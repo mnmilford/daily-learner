@@ -1,6 +1,6 @@
 # Daily Learner
 
-A CLI tool that turns your daily work into spaced-repetition flashcards. It analyzes logs, memory files, and agent conversations, extracts learnable technical concepts via LLM, generates flashcards/questions/challenges, and delivers interactive review sessions with progress tracking.
+A CLI and web tool that turns your daily work into spaced-repetition learning sessions. It analyzes logs, memory files, and agent conversations, extracts learnable technical concepts via LLM, generates difficulty-aware study items, and delivers interactive review sessions with progress tracking.
 
 Built for [OpenClaw](https://github.com/nicholasgasior/openclaw) users, but adaptable to any workflow that produces structured logs.
 
@@ -12,12 +12,17 @@ Built for [OpenClaw](https://github.com/nicholasgasior/openclaw) users, but adap
    - Agent session transcripts (Telegram conversations, direct sessions)
 
 2. **LLM extraction** identifies 5-10 learnable technical concepts and generates:
-   - Flashcards (2-3 per topic)
-   - Short-answer questions (1-2 per topic)
-   - CLI challenges (1 per batch)
+   - Flashcards
+   - Multiple-choice questions
+   - AI-evaluated short-answer prompts
+   - CLI challenges
 
-3. **Morning review** — interactive terminal session with spaced repetition:
+3. **Morning review** — interactive terminal session or web UI with spaced repetition:
    - New topics from yesterday + review queue from prior days
+   - Sticky learner level / persona preferences
+   - Short-answer grading modes: Off, BYOK, and a stubbed Built-in path for later hosted billing
+   - Optional onboarding quiz to recommend a starting level
+   - Assistive AI grading for short answers
    - Rate confidence 1-5 after each item
    - Spacing intervals: 1 → 3 → 7 → 14 → 30 days
    - Streak tracking
@@ -59,6 +64,9 @@ learner generate 2026-03-09
 # Run today's interactive session
 learner
 
+# Start the web UI
+learner web --port 8090
+
 # Review-only (skip new content)
 learner review
 
@@ -75,6 +83,7 @@ learner topics
 - Gemini 2.5 Flash (structured JSON output, ~$0.01/day)
 - JSON tracker (no database needed)
 - System crontab for scheduling
+- Flask web UI for preferences, onboarding, and mixed item types
 
 ## License
 

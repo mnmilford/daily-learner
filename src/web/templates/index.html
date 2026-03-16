@@ -6,50 +6,97 @@
     <title>Daily Learner</title>
     <link rel="stylesheet" href="/learn/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
+<div class="page-glow"></div>
 <div class="container">
-    <div class="header">
-        <h1>Daily Learner</h1>
-        <div class="date" id="today-date"></div>
+    <div class="hero">
+        <div>
+            <div class="eyebrow">Lil Mike's Learning Deck</div>
+            <h1>Daily Learner</h1>
+            <p class="hero-copy">Right-size the material, answer in more than one way, and let the app calibrate itself around how you actually learn.</p>
+        </div>
+        <div class="hero-meta">
+            <div class="date" id="today-date"></div>
+            <div class="level-pill" id="current-level-pill">Loading level…</div>
+        </div>
     </div>
 
+    <div id="adaptive-banner"></div>
+    <div id="onboarding-banner"></div>
+
     <nav>
-        <button class="active" onclick="navigate('session')">Session</button>
-        <button onclick="navigate('topics')">Topics</button>
-        <button onclick="navigate('stats')">Stats</button>
-        <button onclick="navigate('generate')">Generate</button>
+        <button class="active" data-view="session" onclick="navigate('session', this)">Session</button>
+        <button data-view="topics" onclick="navigate('topics', this)">Topics</button>
+        <button data-view="stats" onclick="navigate('stats', this)">Stats</button>
+        <button data-view="generate" onclick="navigate('generate', this)">Generate</button>
+        <button data-view="preferences" onclick="navigate('preferences', this)">Preferences</button>
     </nav>
 
-    <!-- Session View -->
     <div id="view-session">
         <div id="stats-bar" class="stats-row"></div>
         <div id="session-area" style="margin-top: 20px;"></div>
     </div>
 
-    <!-- Topics View -->
     <div id="view-topics" style="display: none;">
         <div id="topics-area"></div>
     </div>
 
-    <!-- Stats View -->
     <div id="view-stats" style="display: none;">
         <div id="full-stats-area"></div>
     </div>
 
-    <!-- Generate View -->
     <div id="view-generate" style="display: none;">
-        <div class="card" style="text-align: center;">
-            <h3 style="margin-bottom: 8px;">Generate Session</h3>
-            <p style="color: var(--text-dim); font-size: 14px; margin-bottom: 16px;">
-                Run the pipeline to create flashcards from a day's logs.
-            </p>
+        <div class="card centered-card">
+            <h3>Generate Session</h3>
+            <p class="muted">Create a new learning set using your current persona and difficulty level.</p>
             <div class="generate-form">
-                <input type="date" id="gen-date" />
+                <input type="date" id="gen-date">
                 <button class="btn btn-primary" onclick="runGenerate()">Generate</button>
             </div>
-            <div id="gen-status" style="margin-top: 16px; font-size: 14px;"></div>
+            <div class="mini-meta" id="generate-meta"></div>
+            <div id="gen-status" class="status-line"></div>
+        </div>
+    </div>
+
+    <div id="view-preferences" style="display: none;">
+        <div class="grid">
+            <div class="card">
+                <h3>Learning Setup</h3>
+                <p class="muted">Set the voice, the level, and whether the app is allowed to nudge the difficulty over time.</p>
+
+                <label class="field-label" for="persona-select">Guide voice</label>
+                <select id="persona-select" class="field-input"></select>
+
+                <label class="field-label" for="difficulty-select">Current level</label>
+                <select id="difficulty-select" class="field-input"></select>
+                <div id="difficulty-description" class="field-help"></div>
+
+                <label class="field-label" for="evaluation-mode-select">Short-answer grading</label>
+                <select id="evaluation-mode-select" class="field-input"></select>
+                <div id="evaluation-mode-description" class="field-help"></div>
+
+                <label class="toggle-row">
+                    <input type="checkbox" id="adaptive-toggle">
+                    <span>Enable adaptive difficulty</span>
+                </label>
+
+                <button class="btn btn-primary" onclick="savePreferences()">Save Preferences</button>
+                <div id="prefs-status" class="status-line"></div>
+            </div>
+
+            <div class="card">
+                <h3>Optional Onboarding Quiz</h3>
+                <p class="muted">A short breadth check that recommends a starting level. You can ignore it, rerun it, or override the result any time.</p>
+                <div id="onboarding-area"></div>
+            </div>
+
+            <div class="card full-span">
+                <h3>Adaptive Difficulty</h3>
+                <p class="muted">The app now uses explicit rules, cooldowns, and recent evidence instead of a hidden average.</p>
+                <div id="adaptive-history-area"></div>
+            </div>
         </div>
     </div>
 </div>
@@ -59,52 +106,382 @@ const API = '/learn';
 let sessionData = null;
 let currentIndex = 0;
 let sessionConfidences = [];
+let preferences = null;
+let onboarding = null;
+let currentItemState = null;
 
-// Navigation
-function navigate(view) {
-    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
-    ['session', 'topics', 'stats', 'generate'].forEach(v => {
-        document.getElementById('view-' + v).style.display = v === view ? 'block' : 'none';
+function navigate(view, button) {
+    document.querySelectorAll('nav button').forEach((b) => b.classList.remove('active'));
+    if (button) button.classList.add('active');
+    document.querySelectorAll('[id^="view-"]').forEach((el) => {
+        el.style.display = el.id === `view-${view}` ? 'block' : 'none';
     });
     if (view === 'topics') loadTopics();
     if (view === 'stats') loadFullStats();
+    if (view === 'preferences') loadPreferences(true);
     if (view === 'session' && !sessionData) loadSession();
 }
 
-// Stats bar
 async function loadStats() {
-    const r = await fetch(API + '/api/stats');
-    const s = await r.json();
-    document.getElementById('today-date').textContent = s.today;
+    const response = await fetch(API + '/api/stats');
+    const stats = await response.json();
+    preferences = stats.preferences || preferences;
+    document.getElementById('today-date').textContent = stats.today;
+    setCurrentLevelPill();
     document.getElementById('stats-bar').innerHTML = `
-        <div class="stat-card"><div class="value">${s.streak}</div><div class="label">Streak</div></div>
-        <div class="stat-card"><div class="value">${s.total_topics}</div><div class="label">Topics</div></div>
-        <div class="stat-card"><div class="value">${s.review_queue}</div><div class="label">Due</div></div>
-        <div class="stat-card"><div class="value">${s.avg_confidence || 0}</div><div class="label">Avg Conf</div></div>
+        <div class="stat-card"><div class="value">${stats.streak}</div><div class="label">Streak</div></div>
+        <div class="stat-card"><div class="value">${stats.total_topics}</div><div class="label">Topics</div></div>
+        <div class="stat-card"><div class="value">${stats.review_queue}</div><div class="label">Due</div></div>
+        <div class="stat-card"><div class="value">${stats.avg_confidence || 0}</div><div class="label">Avg Conf</div></div>
     `;
 }
 
-// Session
+async function loadPreferences(renderOnly = false) {
+    const response = await fetch(API + '/api/preferences');
+    preferences = await response.json();
+    renderPreferences();
+    await loadOnboarding();
+    setCurrentLevelPill();
+    if (preferences?.level && preferences?.persona) {
+        document.getElementById('generate-meta').textContent = `Using ${preferences.level.label} · ${preferences.persona.label}`;
+    }
+}
+
+function renderPreferences() {
+    if (!preferences) return;
+    const personaSelect = document.getElementById('persona-select');
+    const levelSelect = document.getElementById('difficulty-select');
+    const evaluationModeSelect = document.getElementById('evaluation-mode-select');
+
+    personaSelect.innerHTML = preferences.available_personas.map((persona) => `
+        <option value="${persona.id}" ${persona.id === preferences.persona_id ? 'selected' : ''}>${esc(persona.label)}</option>
+    `).join('');
+
+    levelSelect.innerHTML = preferences.available_levels.map((level) => `
+        <option value="${level.id}" ${level.id === preferences.difficulty_level ? 'selected' : ''}>${esc(level.label)}</option>
+    `).join('');
+
+    evaluationModeSelect.innerHTML = preferences.available_evaluation_modes.map((mode) => `
+        <option value="${mode.id}" ${mode.id === preferences.evaluation_mode ? 'selected' : ''}>${esc(mode.label)}</option>
+    `).join('');
+
+    document.getElementById('adaptive-toggle').checked = !!preferences.adaptive_difficulty_enabled;
+    renderDifficultyDescription();
+    renderEvaluationDescription();
+    renderAdaptiveState();
+}
+
+function renderDifficultyDescription() {
+    if (!preferences) return;
+    const selectedId = document.getElementById('difficulty-select').value || preferences.difficulty_level;
+    const level = preferences.available_levels.find((entry) => entry.id === selectedId);
+    document.getElementById('difficulty-description').textContent = level ? level.description : '';
+}
+
+function renderEvaluationDescription() {
+    if (!preferences) return;
+    const selectedId = document.getElementById('evaluation-mode-select').value || preferences.evaluation_mode;
+    const mode = preferences.available_evaluation_modes.find((entry) => entry.id === selectedId);
+    document.getElementById('evaluation-mode-description').textContent = mode ? mode.description : '';
+}
+
+function renderAdaptiveState() {
+    const area = document.getElementById('adaptive-history-area');
+    const adaptive = preferences?.adaptive_state;
+    if (!area || !adaptive) return;
+
+    const summary = adaptive.recent_summary || {};
+    const lastDecision = adaptive.last_decision;
+    const lastChange = adaptive.last_level_change;
+    const policy = adaptive.policy || {};
+    const history = adaptive.recent_history || [];
+    const changeLog = adaptive.change_log || [];
+
+    area.innerHTML = `
+        <div class="adaptive-shell">
+            <div class="adaptive-overview">
+                <div class="adaptive-pill-row">
+                    <span class="adaptive-pill ${adaptive.enabled ? 'is-on' : 'is-off'}">${adaptive.enabled ? 'Adaptive On' : 'Adaptive Off'}</span>
+                    <span class="adaptive-pill">${esc(readinessLabel(lastDecision?.readiness || 'steady'))}</span>
+                    <span class="adaptive-pill">Cooldown: ${adaptive.cooldown_remaining || 0}</span>
+                    <span class="adaptive-pill">Window: ${policy.window || 0}</span>
+                </div>
+                <div class="adaptive-metrics">
+                    <div class="metric-box"><strong>${summary.avg_mastery || 0}</strong><span>Avg mastery</span></div>
+                    <div class="metric-box"><strong>${summary.high_mastery_count || 0}</strong><span>High mastery</span></div>
+                    <div class="metric-box"><strong>${summary.low_mastery_count || 0}</strong><span>Low mastery</span></div>
+                    <div class="metric-box"><strong>${summary.strong_streak || 0}</strong><span>Strong streak</span></div>
+                    <div class="metric-box"><strong>${summary.weak_streak || 0}</strong><span>Weak streak</span></div>
+                    <div class="metric-box"><strong>${summary.hint_count || 0}</strong><span>Hints used</span></div>
+                </div>
+            </div>
+
+            <div class="callout adaptive-callout">
+                <strong>Last decision:</strong> ${esc(lastDecision?.reason || 'No adaptive decision yet.')}
+            </div>
+
+            ${lastChange ? `
+                <div class="adaptive-section">
+                    <div class="section-title">Last level change</div>
+                    <div class="history-card">
+                        <div class="history-row">
+                            <span>${esc(levelLabel(lastChange.previous_level))}</span>
+                            <span class="history-arrow">→</span>
+                            <span>${esc(levelLabel(lastChange.new_level))}</span>
+                        </div>
+                        <div class="history-meta">${esc(lastChange.reason || '')}</div>
+                    </div>
+                </div>` : ''}
+
+            <div class="adaptive-section">
+                <div class="section-title">Rule summary</div>
+                <div class="rule-grid">
+                    <div class="rule-card">
+                        <strong>Promotion</strong>
+                        <span>Avg mastery ≥ ${policy.promote_threshold}</span>
+                        <span>${policy.promote_min_high_mastery}+ high-mastery answers</span>
+                        <span>Strong streak ≥ ${policy.promote_strong_streak}</span>
+                        <span>${policy.promote_max_incorrect} incorrect answer max</span>
+                    </div>
+                    <div class="rule-card">
+                        <strong>Demotion</strong>
+                        <span>Avg mastery ≤ ${policy.demote_threshold}</span>
+                        <span>${policy.demote_min_low_mastery}+ low-mastery answers</span>
+                        <span>Weak streak ≥ ${policy.demote_weak_streak}</span>
+                        <span>Cooldown after any change: ${policy.cooldown_answers}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="adaptive-section">
+                <div class="section-title">Recent level changes</div>
+                ${changeLog.length ? `
+                    <div class="history-list">
+                        ${changeLog.slice(0, 6).map((entry) => `
+                            <div class="history-card">
+                                <div class="history-row">
+                                    <span>${esc(levelLabel(entry.previous_level))}</span>
+                                    <span class="history-arrow">→</span>
+                                    <span>${esc(levelLabel(entry.new_level))}</span>
+                                </div>
+                                <div class="history-meta">${esc(formatTimestamp(entry.timestamp))}</div>
+                                <div class="history-meta">${esc(entry.reason || '')}</div>
+                            </div>
+                        `).join('')}
+                    </div>` : '<div class="subtle-empty">No level changes recorded yet.</div>'}
+            </div>
+
+            <div class="adaptive-section">
+                <div class="section-title">Recent answer signals</div>
+                ${history.length ? `
+                    <div class="signal-list">
+                        ${history.map((entry) => `
+                            <div class="signal-row">
+                                <div>
+                                    <div class="signal-main">${esc(labelFor(entry.item_type))} · ${esc(levelLabel(entry.difficulty_level_at_answer))}</div>
+                                    <div class="signal-sub">${esc(formatTimestamp(entry.timestamp))}</div>
+                                </div>
+                                <div class="signal-tags">
+                                    <span class="signal-tag">${Number(entry.mastery_score || 0).toFixed(1)}/5</span>
+                                    <span class="signal-tag">${esc(entry.correctness || 'self-rated')}</span>
+                                    <span class="signal-tag">${entry.used_hint ? 'hint' : 'no hint'}</span>
+                                    <span class="signal-tag">conf ${esc(entry.confidence)}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>` : '<div class="subtle-empty">No answer history yet.</div>'}
+            </div>
+        </div>
+    `;
+}
+
+function levelLabel(levelId) {
+    if (!levelId || !preferences?.available_levels) return '';
+    return preferences.available_levels.find((level) => level.id === levelId)?.label || levelId;
+}
+
+function readinessLabel(readiness) {
+    return {
+        'insufficient-data': 'Waiting for more data',
+        'cooldown': 'Cooldown active',
+        'promotion-watch': 'Promotion watch',
+        'demotion-watch': 'Demotion watch',
+        'promote': 'Promoted',
+        'demote': 'Lowered',
+        'steady': 'Holding steady',
+        'hold': 'Holding steady',
+        'disabled': 'Adaptive off',
+    }[readiness] || readiness;
+}
+
+function formatTimestamp(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+}
+
+async function savePreferences() {
+    const payload = {
+        persona_id: document.getElementById('persona-select').value,
+        difficulty_level: document.getElementById('difficulty-select').value,
+        evaluation_mode: document.getElementById('evaluation-mode-select').value,
+        adaptive_difficulty_enabled: document.getElementById('adaptive-toggle').checked,
+    };
+
+    const response = await fetch(API + '/api/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    preferences = data.preferences;
+    renderPreferences();
+    setCurrentLevelPill();
+    if (preferences?.level && preferences?.persona) {
+        document.getElementById('generate-meta').textContent = `Using ${preferences.level.label} · ${preferences.persona.label}`;
+    }
+    document.getElementById('prefs-status').innerHTML = '<span class="success-text">Preferences saved.</span>';
+}
+
+async function loadOnboarding() {
+    const response = await fetch(API + '/api/onboarding');
+    onboarding = await response.json();
+    renderOnboarding();
+    renderOnboardingBanner();
+}
+
+function renderOnboarding() {
+    const area = document.getElementById('onboarding-area');
+    if (!onboarding) {
+        area.innerHTML = '';
+        return;
+    }
+
+    const state = onboarding.state || {};
+    const recommendation = state.recommendation && preferences
+        ? preferences.available_levels.find((level) => level.id === state.recommendation)
+        : null;
+
+    let html = '';
+    if (recommendation) {
+        html += `
+            <div class="callout">
+                <strong>Current recommendation:</strong> ${esc(recommendation.label)}
+            </div>
+        `;
+    }
+
+    html += onboarding.quiz.map((question) => `
+        <div class="quiz-block">
+            <div class="quiz-question">${esc(question.prompt)}</div>
+            <div class="quiz-options">
+                ${question.options.map((option) => `
+                    <label class="quiz-option">
+                        <input type="radio" name="${question.id}" value="${option.id}">
+                        <span>${esc(option.label)}</span>
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
+
+    html += `
+        <label class="toggle-row">
+            <input type="checkbox" id="apply-onboarding">
+            <span>Apply the recommendation automatically</span>
+        </label>
+        <div class="button-row">
+            <button class="btn btn-primary" onclick="submitOnboarding()">Get Recommendation</button>
+            <button class="btn btn-secondary" onclick="skipOnboarding()">Skip for Now</button>
+        </div>
+        <div id="onboarding-status" class="status-line"></div>
+    `;
+    area.innerHTML = html;
+}
+
+function renderOnboardingBanner() {
+    const banner = document.getElementById('onboarding-banner');
+    if (!onboarding || onboarding.state?.completed) {
+        banner.innerHTML = '';
+        return;
+    }
+
+    banner.innerHTML = `
+        <div class="banner">
+            <div>
+                <strong>Optional setup:</strong> take the onboarding quiz to get a level recommendation before generating more material.
+            </div>
+            <div class="banner-actions">
+                <button class="btn btn-secondary" onclick="navigate('preferences', document.querySelector('nav button[data-view=preferences]'))">Take quiz</button>
+                <button class="btn btn-secondary" onclick="skipOnboarding()">Skip</button>
+            </div>
+        </div>
+    `;
+}
+
+async function submitOnboarding() {
+    const answers = {};
+    for (const question of onboarding.quiz) {
+        const selected = document.querySelector(`input[name="${question.id}"]:checked`);
+        if (selected) answers[question.id] = selected.value;
+    }
+
+    const response = await fetch(API + '/api/onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            answers,
+            apply_recommendation: document.getElementById('apply-onboarding').checked,
+        }),
+    });
+    const data = await response.json();
+    preferences = data.preferences || preferences;
+    await loadOnboarding();
+    renderPreferences();
+
+    const recommendation = data.result?.recommendation?.label || 'Recommendation saved';
+    document.getElementById('onboarding-status').innerHTML = `<span class="success-text">${esc(recommendation)}</span>`;
+}
+
+async function skipOnboarding() {
+    await fetch(API + '/api/onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skip: true }),
+    });
+    await loadOnboarding();
+}
+
+function setCurrentLevelPill() {
+    const pill = document.getElementById('current-level-pill');
+    if (!preferences?.level) {
+        pill.textContent = 'Loading level…';
+        return;
+    }
+    pill.textContent = `${preferences.persona.label} · ${preferences.level.short_label}`;
+}
+
 async function loadSession() {
     const area = document.getElementById('session-area');
     area.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading session...</div>';
 
-    const r = await fetch(API + '/api/session');
-    sessionData = await r.json();
+    const response = await fetch(API + '/api/session');
+    sessionData = await response.json();
+    preferences = sessionData.preferences || preferences;
     currentIndex = 0;
     sessionConfidences = [];
+    currentItemState = null;
+    setCurrentLevelPill();
 
     if (!sessionData.items || sessionData.items.length === 0) {
         area.innerHTML = `
             <div class="empty-state">
                 <h3>No items for today</h3>
-                <p>Run the pipeline first to generate content.</p>
-                <button class="btn btn-primary" style="margin-top: 16px; width: auto; padding: 10px 24px;"
-                    onclick="navigate('generate'); document.querySelectorAll('nav button')[3].classList.add('active'); document.querySelectorAll('nav button')[0].classList.remove('active');">
-                    Generate Now
-                </button>
-            </div>`;
+                <p>Generate a session using your current learner profile.</p>
+                <button class="btn btn-primary compact-btn" onclick="navigate('generate', document.querySelector('nav button[data-view=generate]'))">Generate Now</button>
+            </div>
+        `;
         return;
     }
 
@@ -113,7 +490,6 @@ async function loadSession() {
 
 function renderItem() {
     const area = document.getElementById('session-area');
-
     if (currentIndex >= sessionData.items.length) {
         showSummary();
         return;
@@ -122,100 +498,263 @@ function renderItem() {
     const item = sessionData.items[currentIndex];
     const total = sessionData.items.length;
     const pct = ((currentIndex) / total * 100).toFixed(0);
+    currentItemState = {
+        usedHint: false,
+        evaluation: null,
+        selectedIndex: null,
+    };
 
-    let typeLabel, typeClass;
-    if (item.type === 'flashcard') { typeLabel = 'Flashcard'; typeClass = 'badge-flashcard'; }
-    else if (item.type === 'question') { typeLabel = 'Question'; typeClass = 'badge-question'; }
-    else { typeLabel = 'CLI Challenge'; typeClass = 'badge-challenge'; }
-
-    const newReview = item.is_new
+    const reviewBadge = item.is_new
         ? '<span class="badge badge-new">NEW</span>'
         : '<span class="badge badge-review">REVIEW</span>';
-
-    let cardContent = '';
-    let answerContent = '';
-
-    if (item.type === 'flashcard') {
-        cardContent = item.front;
-        answerContent = item.back;
-    } else if (item.type === 'question') {
-        cardContent = item.question + (item.hint ? `<div class="hint">Hint: ${esc(item.hint)}</div>` : '');
-        answerContent = item.model_answer;
-    } else {
-        cardContent = item.scenario + (item.hint ? `<div class="hint">Hint: ${esc(item.hint)}</div>` : '');
-        answerContent = `<div class="solution-block">${esc(item.solution)}</div>`;
-    }
 
     area.innerHTML = `
         <div class="progress-wrap">
             <div class="progress-bar"><div class="progress-fill" style="width: ${pct}%"></div></div>
             <div class="progress-text">${currentIndex + 1} / ${total}</div>
         </div>
-        <div class="card">
+        <div class="card session-card">
             <div class="card-type">
-                <span class="${typeClass}">${typeLabel}</span>
-                ${newReview}
+                <span class="type-chip type-${item.item_type}">${esc(item.type_label || labelFor(item.item_type))}</span>
+                ${reviewBadge}
             </div>
             <div class="topic-title">${esc(item.topic_title)}</div>
-            <div class="content">${esc(cardContent)}</div>
-            <button class="btn btn-primary reveal-btn" id="reveal-btn" onclick="revealAnswer()">
-                ${item.type === 'challenge' ? 'Show Solution' : 'Reveal Answer'}
-            </button>
-            <div class="answer-area hidden" id="answer-area">
-                <div class="answer-text">${answerContent}</div>
-                <div class="conf-label">How well did you know this?</div>
-                <div class="confidence-bar">
-                    <button class="conf-btn" data-conf="1" onclick="rate(1)">1</button>
-                    <button class="conf-btn" data-conf="2" onclick="rate(2)">2</button>
-                    <button class="conf-btn" data-conf="3" onclick="rate(3)">3</button>
-                    <button class="conf-btn" data-conf="4" onclick="rate(4)">4</button>
-                    <button class="conf-btn" data-conf="5" onclick="rate(5)">5</button>
-                </div>
-            </div>
+            <div class="content">${esc(item.prompt)}</div>
+            ${item.hint ? '<button class="btn btn-secondary hint-toggle" onclick="toggleHint()">Show Hint</button>' : ''}
+            <div id="hint-area" class="hint-area hidden">${item.hint ? esc(item.hint) : ''}</div>
+            <div id="interaction-area">${renderInteraction(item)}</div>
+            <div id="feedback-area"></div>
         </div>
     `;
 }
 
-function esc(s) {
-    if (!s) return '';
-    // Allow the hint/solution HTML through but escape the rest
-    const div = document.createElement('div');
-    div.textContent = s;
-    return div.innerHTML;
+function renderInteraction(item) {
+    if (item.item_type === 'flashcard') {
+        return `<button class="btn btn-primary reveal-btn" id="reveal-btn" onclick="revealAnswer()">${'Reveal Answer'}</button>`;
+    }
+    if (item.item_type === 'multiple_choice') {
+        return `
+            <div class="choice-list">
+                ${item.choices.map((choice, index) => `
+                    <label class="choice-option">
+                        <input type="radio" name="mcq-choice" value="${index}">
+                        <span>${esc(choice)}</span>
+                    </label>
+                `).join('')}
+            </div>
+            <button class="btn btn-primary" onclick="submitMultipleChoice()">Check Answer</button>
+        `;
+    }
+    if (item.item_type === 'short_answer') {
+        const buttonLabel = preferences?.evaluation_mode === 'byok'
+            ? 'Evaluate Answer'
+            : (preferences?.evaluation_mode === 'hosted' ? 'Try Hosted Evaluation' : 'Reveal Reference Answer');
+        return `
+            <textarea id="short-answer-input" class="answer-box" placeholder="Explain it in your own words..."></textarea>
+            <button class="btn btn-primary" onclick="submitShortAnswer()">${buttonLabel}</button>
+        `;
+    }
+    return `<button class="btn btn-primary reveal-btn" id="reveal-btn" onclick="revealAnswer()">Show Solution</button>`;
+}
+
+function labelFor(itemType) {
+    return {
+        flashcard: 'Flashcard',
+        multiple_choice: 'Multiple Choice',
+        short_answer: 'Short Answer',
+        challenge: 'CLI Challenge',
+    }[itemType] || 'Learning Item';
+}
+
+function toggleHint() {
+    currentItemState.usedHint = true;
+    document.getElementById('hint-area').classList.toggle('hidden');
 }
 
 function revealAnswer() {
+    const item = sessionData.items[currentIndex];
+    currentItemState.evaluation = {
+        correctness: null,
+        score: null,
+    };
+
+    const feedback = document.getElementById('feedback-area');
+    const answerMarkup = item.item_type === 'challenge'
+        ? `<div class="solution-block">${esc(item.answer)}</div>`
+        : `<div class="answer-text">${esc(item.answer)}</div>`;
+    feedback.innerHTML = `
+        <div class="answer-panel">
+            <div class="answer-heading">${item.item_type === 'challenge' ? 'Solution' : 'Answer'}</div>
+            ${answerMarkup}
+            ${renderConfidence()}
+        </div>
+    `;
     document.getElementById('reveal-btn').style.display = 'none';
-    document.getElementById('answer-area').classList.remove('hidden');
+}
+
+async function submitMultipleChoice() {
+    const item = sessionData.items[currentIndex];
+    const selected = document.querySelector('input[name="mcq-choice"]:checked');
+    if (!selected) return;
+
+    currentItemState.selectedIndex = parseInt(selected.value, 10);
+
+    const response = await fetch(API + '/api/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            item,
+            selected_index: currentItemState.selectedIndex,
+        }),
+    });
+    const data = await response.json();
+    if (!data.ok) return;
+
+    currentItemState.evaluation = data.evaluation;
+    const feedback = document.getElementById('feedback-area');
+    feedback.innerHTML = `
+        <div class="answer-panel">
+            <div class="answer-heading">${data.evaluation.correctness === 'correct' ? 'Correct' : 'Not quite'}</div>
+            <div class="answer-text">${esc(data.evaluation.feedback)}</div>
+            <div class="rationale">${esc(data.evaluation.rationale || '')}</div>
+            <div class="answer-meta"><strong>Correct answer:</strong> ${esc(data.evaluation.correct_answer || '')}</div>
+            ${renderConfidence()}
+        </div>
+    `;
+}
+
+async function submitShortAnswer() {
+    const item = sessionData.items[currentIndex];
+    const answer = document.getElementById('short-answer-input').value.trim();
+    if (!answer) return;
+
+    const feedback = document.getElementById('feedback-area');
+    feedback.innerHTML = '<div class="loading-msg slim"><div class="spinner"></div>Evaluating with AI...</div>';
+
+    const response = await fetch(API + '/api/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item, answer }),
+    });
+    const data = await response.json();
+
+    if (!data.ok) {
+        feedback.innerHTML = `
+            <div class="answer-panel">
+                <div class="answer-heading">Evaluation unavailable</div>
+                <div class="answer-text">${esc(data.error || 'Could not evaluate answer.')}</div>
+                <div class="answer-group">
+                    <div class="answer-group-title">Reference answer</div>
+                    <div class="answer-text">${esc(item.answer || '')}</div>
+                </div>
+                ${renderConfidence()}
+            </div>
+        `;
+        return;
+    }
+
+    currentItemState.evaluation = data.evaluation;
+    if (data.evaluation.mode === 'off') {
+        feedback.innerHTML = `
+            <div class="answer-panel">
+                <div class="answer-heading">Self-check mode</div>
+                <div class="answer-text">${esc(data.evaluation.feedback)}</div>
+                ${data.evaluation.rubric_points?.length ? `
+                    <div class="answer-group">
+                        <div class="answer-group-title">What to include</div>
+                        <ul>${data.evaluation.rubric_points.map((point) => `<li>${esc(point)}</li>`).join('')}</ul>
+                    </div>` : ''}
+                <div class="answer-group">
+                    <div class="answer-group-title">Reference answer</div>
+                    <div class="answer-text">${esc(data.evaluation.exemplar_answer || '')}</div>
+                </div>
+                ${renderConfidence()}
+            </div>
+        `;
+        return;
+    }
+
+    feedback.innerHTML = `
+        <div class="answer-panel">
+            <div class="answer-heading">${esc(titleCase(data.evaluation.correctness))} · ${Number(data.evaluation.score).toFixed(1)}/5</div>
+            <div class="answer-text">${esc(data.evaluation.feedback)}</div>
+            ${data.evaluation.strengths?.length ? `
+                <div class="answer-group">
+                    <div class="answer-group-title">What worked</div>
+                    <ul>${data.evaluation.strengths.map((point) => `<li>${esc(point)}</li>`).join('')}</ul>
+                </div>` : ''}
+            ${data.evaluation.missing_points?.length ? `
+                <div class="answer-group">
+                    <div class="answer-group-title">What to tighten up</div>
+                    <ul>${data.evaluation.missing_points.map((point) => `<li>${esc(point)}</li>`).join('')}</ul>
+                </div>` : ''}
+            <div class="answer-group">
+                <div class="answer-group-title">Reference answer</div>
+                <div class="answer-text">${esc(data.evaluation.exemplar_answer || '')}</div>
+            </div>
+            ${renderConfidence()}
+        </div>
+    `;
+}
+
+function renderConfidence() {
+    return `
+        <div class="conf-label">How well did you know this?</div>
+        <div class="confidence-bar">
+            <button class="conf-btn" data-conf="1" onclick="rate(1)">1</button>
+            <button class="conf-btn" data-conf="2" onclick="rate(2)">2</button>
+            <button class="conf-btn" data-conf="3" onclick="rate(3)">3</button>
+            <button class="conf-btn" data-conf="4" onclick="rate(4)">4</button>
+            <button class="conf-btn" data-conf="5" onclick="rate(5)">5</button>
+        </div>
+    `;
 }
 
 async function rate(confidence) {
     const item = sessionData.items[currentIndex];
     sessionConfidences.push(confidence);
 
-    // Record review
-    await fetch(API + '/api/review', {
+    const evaluation = currentItemState?.evaluation || {};
+    const response = await fetch(API + '/api/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic_id: item.topic_id, confidence }),
+        body: JSON.stringify({
+            topic_id: item.topic_id,
+            confidence,
+            item_type: item.item_type,
+            correctness: evaluation.correctness,
+            mastery_score: evaluation.score,
+            used_hint: currentItemState?.usedHint || false,
+        }),
     });
+    const data = await response.json();
+    if (data.adaptive_update) {
+        preferences = data.adaptive_update.preferences;
+        setCurrentLevelPill();
+        document.getElementById('adaptive-banner').innerHTML = `
+            <div class="banner success-banner">
+                <div><strong>Adaptive difficulty updated:</strong> ${esc(preferences.level.label)}<br>${esc(data.adaptive_update.reason || '')}</div>
+            </div>
+        `;
+    } else if (data.preferences) {
+        preferences = data.preferences;
+    }
+    renderAdaptiveState();
 
-    currentIndex++;
+    currentIndex += 1;
     renderItem();
 }
 
 async function showSummary() {
-    // Mark session complete
-    const r = await fetch(API + '/api/complete', { method: 'POST' });
-    const data = await r.json();
+    const response = await fetch(API + '/api/complete', { method: 'POST' });
+    const data = await response.json();
     const stats = data.stats;
 
     const avg = sessionConfidences.length
         ? (sessionConfidences.reduce((a, b) => a + b, 0) / sessionConfidences.length).toFixed(1)
         : 0;
 
-    const area = document.getElementById('session-area');
-    area.innerHTML = `
+    document.getElementById('session-area').innerHTML = `
         <div class="progress-wrap">
             <div class="progress-bar"><div class="progress-fill" style="width: 100%"></div></div>
         </div>
@@ -226,7 +765,7 @@ async function showSummary() {
             <div class="stats-row">
                 <div class="stat-card"><div class="value">${sessionConfidences.length}</div><div class="label">Reviewed</div></div>
                 <div class="stat-card"><div class="value">${stats.streak}</div><div class="label">Streak</div></div>
-                <div class="stat-card"><div class="value">${stats.total_topics}</div><div class="label">Total Topics</div></div>
+                <div class="stat-card"><div class="value">${stats.total_topics}</div><div class="label">Topics</div></div>
                 <div class="stat-card"><div class="value">${stats.graduated}</div><div class="label">Graduated</div></div>
             </div>
         </div>
@@ -235,114 +774,135 @@ async function showSummary() {
     loadStats();
 }
 
-// Topics
 async function loadTopics() {
     const area = document.getElementById('topics-area');
     area.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading topics...</div>';
 
-    const r = await fetch(API + '/api/topics');
-    const topics = await r.json();
+    const response = await fetch(API + '/api/topics');
+    const topics = await response.json();
 
     if (!topics.length) {
         area.innerHTML = '<div class="empty-state"><h3>No topics yet</h3><p>Generate a session first.</p></div>';
         return;
     }
 
-    let html = '<div class="card" style="padding: 0;"><ul class="topics-list">';
-    for (const t of topics) {
-        const status = t.graduated ? '<span style="color: var(--green)">graduated</span>' : `next: ${t.next_review}`;
+    let html = '<div class="card topic-shell"><ul class="topics-list">';
+    for (const topic of topics) {
+        const status = topic.graduated
+            ? '<span class="success-text">graduated</span>'
+            : `next: ${topic.next_review}`;
         html += `
             <li class="topic-item">
                 <div class="topic-info">
-                    <div class="topic-name">${esc(t.title || t.id)}</div>
-                    <div class="topic-domain">${esc(t.domain || '')}</div>
+                    <div class="topic-name">${esc(topic.title || topic.id)}</div>
+                    <div class="topic-domain">${esc(topic.domain || '')}</div>
                 </div>
                 <div class="topic-meta">
-                    <span><span class="conf-dot conf-${t.confidence}"></span>${t.confidence}/5</span>
-                    <span>${t.times_reviewed}x</span>
+                    <span><span class="conf-dot conf-${topic.confidence}"></span>${topic.confidence}/5</span>
+                    <span>${topic.times_reviewed}x</span>
                     <span>${status}</span>
                 </div>
-            </li>`;
+            </li>
+        `;
     }
     html += '</ul></div>';
     area.innerHTML = html;
 }
 
-// Full stats
 async function loadFullStats() {
-    const area = document.getElementById('full-stats-area');
-    const r = await fetch(API + '/api/stats');
-    const s = await r.json();
+    const response = await fetch(API + '/api/stats');
+    const stats = await response.json();
 
-    area.innerHTML = `
+    document.getElementById('full-stats-area').innerHTML = `
         <div class="stats-row" style="margin-bottom: 20px;">
-            <div class="stat-card"><div class="value">${s.streak}</div><div class="label">Day Streak</div></div>
-            <div class="stat-card"><div class="value">${s.total_sessions}</div><div class="label">Sessions</div></div>
+            <div class="stat-card"><div class="value">${stats.streak}</div><div class="label">Day Streak</div></div>
+            <div class="stat-card"><div class="value">${stats.total_sessions}</div><div class="label">Sessions</div></div>
+            <div class="stat-card"><div class="value">${stats.preferences.level.short_label}</div><div class="label">Level</div></div>
         </div>
         <div class="card">
-            <table style="width: 100%; font-size: 14px;">
-                <tr><td style="color: var(--text-dim);">Total topics</td><td style="text-align: right; font-weight: 600;">${s.total_topics}</td></tr>
-                <tr><td style="color: var(--text-dim);">Reviewed</td><td style="text-align: right; font-weight: 600;">${s.reviewed}</td></tr>
-                <tr><td style="color: var(--text-dim);">Unreviewed</td><td style="text-align: right; font-weight: 600;">${s.unreviewed}</td></tr>
-                <tr><td style="color: var(--text-dim);">Graduated</td><td style="text-align: right; font-weight: 600; color: var(--green);">${s.graduated}</td></tr>
-                <tr><td style="color: var(--text-dim);">Avg confidence</td><td style="text-align: right; font-weight: 600;">${s.avg_confidence}/5</td></tr>
-                <tr><td style="color: var(--text-dim);">Review queue</td><td style="text-align: right; font-weight: 600;">${s.review_queue}</td></tr>
+            <table class="stats-table">
+                <tr><td>Total topics</td><td>${stats.total_topics}</td></tr>
+                <tr><td>Reviewed</td><td>${stats.reviewed}</td></tr>
+                <tr><td>Unreviewed</td><td>${stats.unreviewed}</td></tr>
+                <tr><td>Graduated</td><td class="success-text">${stats.graduated}</td></tr>
+                <tr><td>Avg confidence</td><td>${stats.avg_confidence}/5</td></tr>
+                <tr><td>Review queue</td><td>${stats.review_queue}</td></tr>
             </table>
         </div>
     `;
 }
 
-// Generate
 async function runGenerate() {
-    const dateInput = document.getElementById('gen-date');
+    const date = document.getElementById('gen-date').value || null;
     const status = document.getElementById('gen-status');
-    const date = dateInput.value || null;
-
-    status.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Running pipeline...</div>';
+    status.innerHTML = '<div class="loading-msg slim"><div class="spinner"></div>Running pipeline...</div>';
 
     try {
-        const r = await fetch(API + '/api/generate', {
+        const response = await fetch(API + '/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ date }),
         });
-        const data = await r.json();
+        const data = await response.json();
         if (data.ok) {
-            status.innerHTML = `<span style="color: var(--green);">Session generated! <a href="#" onclick="navigate('session'); document.querySelectorAll('nav button')[0].click(); return false;" style="color: var(--accent);">Start reviewing</a></span>`;
             sessionData = null;
+            status.innerHTML = '<span class="success-text">Session generated. Switch back to Session to review it.</span>';
+            document.getElementById('generate-meta').textContent = `Using ${preferences.level.label} · ${preferences.persona.label}`;
         } else {
-            status.innerHTML = `<span style="color: var(--yellow);">${esc(data.message)}</span>`;
+            status.innerHTML = `<span class="warn-text">${esc(data.message)}</span>`;
         }
-    } catch (e) {
-        status.innerHTML = `<span style="color: var(--red);">Error: ${esc(e.message)}</span>`;
+    } catch (error) {
+        status.innerHTML = `<span class="error-text">${esc(error.message)}</span>`;
     }
 }
 
-// Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT') return;
+function titleCase(value) {
+    if (!value) return '';
+    return value.charAt(0).toUpperCase() + value.slice(1);
+}
 
-    // Space/Enter to reveal
-    if ((e.key === ' ' || e.key === 'Enter') && document.getElementById('reveal-btn')?.style.display !== 'none') {
-        e.preventDefault();
-        revealAnswer();
-        return;
+function esc(value) {
+    if (value === null || value === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = String(value);
+    return div.innerHTML;
+}
+
+document.addEventListener('change', (event) => {
+    if (event.target.id === 'difficulty-select') {
+        renderDifficultyDescription();
     }
-
-    // 1-5 to rate
-    if ('12345'.includes(e.key) && document.getElementById('answer-area')?.classList.contains('hidden') === false) {
-        rate(parseInt(e.key));
+    if (event.target.id === 'evaluation-mode-select') {
+        renderEvaluationDescription();
     }
 });
 
-// Init
-loadStats();
-loadSession();
+document.addEventListener('keydown', (event) => {
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
+    if ((event.key === ' ' || event.key === 'Enter') && document.getElementById('reveal-btn')?.style.display !== 'none') {
+        event.preventDefault();
+        revealAnswer();
+        return;
+    }
+    if ('12345'.includes(event.key) && document.querySelector('.confidence-bar')) {
+        rate(parseInt(event.key, 10));
+    }
+});
 
-// Set default date for generate
-const yesterday = new Date();
-yesterday.setDate(yesterday.getDate() - 1);
-document.getElementById('gen-date').value = yesterday.toISOString().split('T')[0];
+async function init() {
+    await loadPreferences();
+    await loadStats();
+    await loadSession();
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    document.getElementById('gen-date').value = yesterday.toISOString().split('T')[0];
+    if (preferences?.level && preferences?.persona) {
+        document.getElementById('generate-meta').textContent = `Using ${preferences.level.label} · ${preferences.persona.label}`;
+    }
+}
+
+init();
 </script>
 </body>
 </html>
