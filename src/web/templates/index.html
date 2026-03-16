@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Daily Learner</title>
-    <link rel="stylesheet" href="/learn/static/style.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
@@ -102,7 +102,7 @@
 </div>
 
 <script>
-const API = '/learn';
+const API = {{ base_path | tojson }};
 let sessionData = null;
 let currentIndex = 0;
 let sessionConfidences = [];
