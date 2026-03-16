@@ -8,8 +8,8 @@ Daily Learner runs as two server-backed environments on the droplet:
 They are intentionally separate in three ways:
 
 - Separate git worktrees:
-  - prod: `/root/daily-learner` on `main`
-  - dev: `/root/daily-learner-dev` on `learn-dev`
+  - prod: `/root/daily-learner-prod` on `main`
+  - dev: `/root/daily-learner` on `learn-dev`
 - Separate systemd services:
   - prod: `daily-learner-web.service`
   - dev: `daily-learner-web-dev.service`

@@ -17,12 +17,12 @@ deploy_env() {
 
   case "$name" in
     prod)
-      workdir="/root/daily-learner"
+      workdir="/root/daily-learner-prod"
       branch="main"
       service="daily-learner-web.service"
       ;;
     dev)
-      workdir="/root/daily-learner-dev"
+      workdir="/root/daily-learner"
       branch="learn-dev"
       service="daily-learner-web-dev.service"
       ;;
@@ -45,12 +45,12 @@ status_env() {
 
   case "$name" in
     prod)
-      workdir="/root/daily-learner"
+      workdir="/root/daily-learner-prod"
       branch="main"
       service="daily-learner-web.service"
       ;;
     dev)
-      workdir="/root/daily-learner-dev"
+      workdir="/root/daily-learner"
       branch="learn-dev"
       service="daily-learner-web-dev.service"
       ;;
