@@ -2,8 +2,8 @@
 
 import json
 import logging
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from src.config import load_config, get_data_dir
 from src.ingest import ingest_all
@@ -11,6 +11,7 @@ from src.extract.extractor import extract_topics
 from src.generate.generator import generate_content
 from src.generate import SessionContent
 from src.llm import LLMClient
+from src.preferences import PreferencesStore
 from src.tracker.tracker import Tracker
 
 log = logging.getLogger("daily-learner.pipeline")
@@ -47,13 +48,22 @@ def get_yesterday_ct() -> str:
     return yesterday.strftime("%Y-%m-%d")
 
 
-def run_pipeline(date_str: str | None = None):
+def run_pipeline(date_str: str | None = None, learner_preferences: dict | None = None):
     """Run the full pipeline for a given date (default: yesterday CT)."""
     config = load_config()
     _setup_logging(config)
 
     if not date_str:
         date_str = get_yesterday_ct()
+
+    if learner_preferences is None:
+        learner_preferences = PreferencesStore(config).get_preferences()
+
+    config = deepcopy(config)
+    config["learner_profile"] = {
+        "difficulty_level": learner_preferences["difficulty_level"],
+        "persona_id": learner_preferences["persona_id"],
+    }
 
     log.info(f"Pipeline starting for {date_str}")
 
@@ -81,11 +91,13 @@ def run_pipeline(date_str: str | None = None):
 
     # Step 3: Generate content
     log.info("Generating learning content...")
-    flashcards, questions, challenges = generate_content(topics, llm, config)
+    items = generate_content(topics, llm, config)
 
     # Step 4: Build and save session
     session = SessionContent(
         date=date_str,
+        difficulty_level=learner_preferences["difficulty_level"],
+        persona_id=learner_preferences["persona_id"],
         topics=[{
             "id": t.id,
             "title": t.title,
@@ -95,9 +107,7 @@ def run_pipeline(date_str: str | None = None):
             "is_bonus": t.is_bonus,
             "tags": t.tags,
         } for t in topics],
-        flashcards=flashcards,
-        questions=questions,
-        challenges=challenges,
+        items=items,
     )
 
     session_dir = get_data_dir(config) / "sessions"

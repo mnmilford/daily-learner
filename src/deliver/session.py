@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.prompt import Prompt, IntPrompt
 from rich.text import Text
 
+from src.session_items import normalize_session_items
 from src.tracker.tracker import Tracker
 
 console = Console()
@@ -72,37 +73,29 @@ def _select_items(session: dict, tracker: Tracker, today: str, config: dict) -> 
     # Build content lookups from ALL session files (so review items have content)
     all_sessions = _load_all_sessions(config)
     topic_lookup = {}
-    fc_by_topic = {}
-    q_by_topic = {}
-    ch_by_topic = {}
+    items_by_topic = {}
 
     for s in all_sessions:
         for t in s.get("topics", []):
             if t["id"] not in topic_lookup:
                 topic_lookup[t["id"]] = t
-        for fc in s.get("flashcards", []):
-            fc_by_topic.setdefault(fc["topic_id"], []).append(fc)
-        for q in s.get("questions", []):
-            q_by_topic.setdefault(q["topic_id"], []).append(q)
-        for ch in s.get("challenges", []):
-            ch_by_topic.setdefault(ch["topic_id"], []).append(ch)
+        for item in normalize_session_items(s):
+            items_by_topic.setdefault(item["topic_id"], []).append(item)
 
     # Calculate how many of each
-    total_items = sum(len(v) for v in fc_by_topic.values()) + sum(len(v) for v in q_by_topic.values())
+    total_items = sum(len(v) for v in items_by_topic.values())
     max_items = max(total_items, 12)
 
     # Select topic IDs to include — only those with actual content
-    selected_new = [tid for tid in new_ids if tid in fc_by_topic or tid in q_by_topic or tid in ch_by_topic]
-    selected_review = [tid for tid in review_ids if tid in fc_by_topic or tid in q_by_topic or tid in ch_by_topic]
+    selected_new = [tid for tid in new_ids if tid in items_by_topic]
+    selected_review = [tid for tid in review_ids if tid in items_by_topic]
     selected_review = selected_review[:max(2, int(max_items * review_ratio))]
     selected_ids = selected_new + selected_review
 
     return {
         "topic_ids": selected_ids,
         "topic_lookup": topic_lookup,
-        "fc_by_topic": fc_by_topic,
-        "q_by_topic": q_by_topic,
-        "ch_by_topic": ch_by_topic,
+        "items_by_topic": items_by_topic,
         "new_ids": new_ids,
         "review_ids": set(selected_review),
     }
@@ -141,9 +134,7 @@ def run_session(session_path: str, tracker: Tracker, today: str, config: dict, r
     # Count total items
     total = 0
     for tid in topic_ids:
-        total += len(items["fc_by_topic"].get(tid, []))
-        total += len(items["q_by_topic"].get(tid, []))
-        total += len(items["ch_by_topic"].get(tid, []))
+        total += len(items["items_by_topic"].get(tid, []))
 
     current = 0
     confidences = []
@@ -158,42 +149,42 @@ def run_session(session_path: str, tracker: Tracker, today: str, config: dict, r
             if topic_info.get("summary"):
                 console.print(f"[dim]{topic_info['summary']}[/dim]\n")
 
-            # Flashcards
-            for fc in items["fc_by_topic"].get(tid, []):
+            for item in items["items_by_topic"].get(tid, []):
                 current += 1
                 console.print(f"[dim]({current}/{total})[/dim]")
-                console.print(Panel(fc["front"], title="Flashcard", border_style="cyan"))
-                Prompt.ask("[dim]Press Enter to reveal[/dim]", default="")
-                console.print(Panel(fc["back"], title="Answer", border_style="green"))
-                c = _ask_confidence()
-                confidences.append(c)
-                tracker.record_review(tid, c, today)
-                console.print()
+                title = item.get("type_label", item["item_type"].replace("_", " ").title())
 
-            # Questions
-            for q in items["q_by_topic"].get(tid, []):
-                current += 1
-                console.print(f"[dim]({current}/{total})[/dim]")
-                hint_text = f"\n[dim]Hint: {q.get('hint', '')}[/dim]" if q.get("hint") else ""
-                console.print(Panel(q["question"] + hint_text, title="Question", border_style="yellow"))
-                answer = Prompt.ask("[bold]Your answer[/bold]", default="(skipped)")
-                console.print(Panel(q["model_answer"], title="Model Answer", border_style="green"))
-                c = _ask_confidence()
-                confidences.append(c)
-                tracker.record_review(tid, c, today)
-                console.print()
+                if item["item_type"] == "flashcard":
+                    console.print(Panel(item["prompt"], title=title, border_style="cyan"))
+                    Prompt.ask("[dim]Press Enter to reveal[/dim]", default="")
+                    console.print(Panel(item["answer"], title="Answer", border_style="green"))
+                elif item["item_type"] == "multiple_choice":
+                    option_lines = [f"{idx + 1}. {choice}" for idx, choice in enumerate(item.get("choices", []))]
+                    prompt_text = item["prompt"]
+                    if item.get("hint"):
+                        prompt_text += f"\n\n[dim]Hint: {item['hint']}[/dim]"
+                    if option_lines:
+                        prompt_text += "\n\n" + "\n".join(option_lines)
+                    console.print(Panel(prompt_text, title=title, border_style="yellow"))
+                    Prompt.ask("[bold]Your answer (1-4)[/bold]", default="1")
+                    rationale = item.get("rationale", "")
+                    answer_text = item["answer"]
+                    if rationale:
+                        answer_text += f"\n\nWhy: {rationale}"
+                    console.print(Panel(answer_text, title="Answer", border_style="green"))
+                elif item["item_type"] == "short_answer":
+                    hint_text = f"\n[dim]Hint: {item.get('hint', '')}[/dim]" if item.get("hint") else ""
+                    console.print(Panel(item["prompt"] + hint_text, title=title, border_style="yellow"))
+                    Prompt.ask("[bold]Your answer[/bold]", default="(skipped)")
+                    console.print(Panel(item["answer"], title="Model Answer", border_style="green"))
+                else:
+                    prompt_text = item["prompt"]
+                    if item.get("hint"):
+                        prompt_text += f"\n\n[dim]Hint: {item['hint']}[/dim]"
+                    console.print(Panel(prompt_text, title=title, border_style="magenta"))
+                    Prompt.ask("[dim]Try it in your terminal, then press Enter[/dim]", default="")
+                    console.print(Panel(item["answer"], title="Solution", border_style="green"))
 
-            # Challenges
-            for ch in items["ch_by_topic"].get(tid, []):
-                current += 1
-                console.print(f"[dim]({current}/{total})[/dim]")
-                console.print(Panel(
-                    f"{ch['scenario']}\n\n[dim]Hint: {ch.get('hint', '')}[/dim]",
-                    title="CLI Challenge",
-                    border_style="magenta",
-                ))
-                Prompt.ask("[dim]Try it in your terminal, then press Enter[/dim]", default="")
-                console.print(Panel(ch["solution"], title="Solution", border_style="green"))
                 c = _ask_confidence()
                 confidences.append(c)
                 tracker.record_review(tid, c, today)
