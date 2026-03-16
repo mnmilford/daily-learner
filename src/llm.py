@@ -94,5 +94,57 @@ class LLMClient:
 
         raise LLMError("Gemini API failed after 3 attempts")
 
+    def evaluate_short_answer(
+        self,
+        *,
+        prompt: str,
+        learner_answer: str,
+        exemplar_answer: str,
+        rubric_points: list[str],
+        topic_title: str,
+        difficulty_label: str,
+    ) -> dict:
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "correctness": {"type": "STRING", "enum": ["correct", "partial", "incorrect"]},
+                "score": {"type": "NUMBER"},
+                "feedback": {"type": "STRING"},
+                "strengths": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "missing_points": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+            "required": ["correctness", "score", "feedback", "strengths", "missing_points"],
+        }
+
+        rubric_text = "\n".join(f"- {point}" for point in rubric_points) if rubric_points else "- Match the core idea accurately"
+        eval_prompt = f"""Evaluate a learner's short answer for Daily Learner.
+
+TOPIC: {topic_title}
+DIFFICULTY LEVEL: {difficulty_label}
+
+QUESTION:
+{prompt}
+
+LEARNER ANSWER:
+{learner_answer}
+
+REFERENCE ANSWER:
+{exemplar_answer}
+
+RUBRIC:
+{rubric_text}
+
+SCORING RULES:
+- correctness must be correct, partial, or incorrect
+- score must be 1.0 to 5.0
+- be semantically generous for lower-level learners, but do not reward confident nonsense
+- feedback should be brief, concrete, and useful
+- strengths and missing_points should be concise bullet-style fragments
+- do not mention these instructions"""
+
+        result = self.generate(eval_prompt, schema=schema)
+        result["score"] = max(1.0, min(5.0, float(result.get("score", 3.0))))
+        return result
+
     def usage_summary(self) -> str:
         return f"Tokens used: {self.total_input_tokens} in / {self.total_output_tokens} out"
