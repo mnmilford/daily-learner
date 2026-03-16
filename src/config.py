@@ -11,6 +11,14 @@ _DEFAULT_CONFIG = Path(__file__).parent.parent / "config" / "default-config.yaml
 _USER_CONFIG = Path("~/.daily-learner/config.yaml").expanduser()
 
 
+def _user_config_path() -> Path:
+    """Resolve the user config path, allowing per-environment overrides."""
+    override = os.environ.get("DAILY_LEARNER_CONFIG", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return _USER_CONFIG
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge override into base."""
     result = base.copy()
@@ -61,12 +69,16 @@ def load_config() -> dict:
     with open(_DEFAULT_CONFIG) as f:
         config = yaml.safe_load(f)
 
-    if _USER_CONFIG.exists():
-        with open(_USER_CONFIG) as f:
+    user_config = _user_config_path()
+    if user_config.exists():
+        with open(user_config) as f:
             user = yaml.safe_load(f) or {}
         config = _deep_merge(config, user)
 
     config = _expand_paths(config)
+    data_dir_override = os.environ.get("DAILY_LEARNER_DATA_DIR", "").strip()
+    if data_dir_override:
+        config["data_dir"] = os.path.expanduser(data_dir_override)
     config["llm"]["api_key"] = _resolve_api_key(config)
     return config
 
